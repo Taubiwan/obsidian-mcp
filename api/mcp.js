@@ -1,3 +1,5 @@
+import { scrapeUrl, toMarkdown, slugify } from '../lib/scraper.js';
+
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const VAULT_REPO = process.env.VAULT_REPO;
 const VAULT_BRANCH = process.env.VAULT_BRANCH || 'main';
@@ -55,12 +57,32 @@ async function get_daily_sessions(date) {
   return content;
 }
 
+async function scrape_url(url, maxChars) {
+  const result = await scrapeUrl(url, { maxChars });
+  return toMarkdown(result);
+}
+
+async function scrape_to_note(url, path, folder, maxChars) {
+  const result = await scrapeUrl(url, { maxChars });
+  const dir = (folder || 'Sources').replace(/^\/+|\/+$/g, '');
+  const target = path || `${dir}/${new Date().toISOString().slice(0, 10)}-${slugify(result.title)}.md`;
+  await write_note(target, toMarkdown(result));
+  return [
+    `Note créée : ${target}`,
+    `Source : ${url}`,
+    `Type : ${result.kind}`,
+    result.truncated ? 'Contenu tronqué (augmente max_chars pour tout garder).' : null,
+  ].filter(Boolean).join('\n');
+}
+
 const TOOLS = [
   { name: 'read_note', description: "Lire le contenu d'une note Obsidian", inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
   { name: 'write_note', description: "Écrire (ou écraser) une note Obsidian", inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
   { name: 'append_note', description: "Ajouter du contenu à la fin d'une note Obsidian", inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
   { name: 'list_folder', description: "Lister les fichiers d'un dossier du vault", inputSchema: { type: 'object', properties: { folder: { type: 'string' } }, required: ['folder'] } },
   { name: 'get_daily_sessions', description: "Résumés de sessions Claude Code du jour", inputSchema: { type: 'object', properties: { date: { type: 'string' } }, required: ['date'] } },
+  { name: 'scrape_url', description: "Récupérer le contenu d'une URL (article, post X/Twitter, vidéo YouTube avec transcript) en Markdown propre", inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'URL http(s) à récupérer' }, max_chars: { type: 'number', description: 'Longueur max du contenu (défaut 20000)' } }, required: ['url'] } },
+  { name: 'scrape_to_note', description: "Récupérer une URL et l'enregistrer directement comme note Obsidian (frontmatter source/auteur/date)", inputSchema: { type: 'object', properties: { url: { type: 'string' }, path: { type: 'string', description: 'Chemin exact de la note. Sinon généré depuis le titre.' }, folder: { type: 'string', description: 'Dossier cible si path absent (défaut : Sources)' }, max_chars: { type: 'number' } }, required: ['url'] } },
 ];
 
 async function handleToolCall(name, args) {
@@ -70,6 +92,8 @@ async function handleToolCall(name, args) {
     case 'append_note': return append_note(args.path, args.content);
     case 'list_folder': return list_folder(args.folder);
     case 'get_daily_sessions': return get_daily_sessions(args.date);
+    case 'scrape_url': return scrape_url(args.url, args.max_chars);
+    case 'scrape_to_note': return scrape_to_note(args.url, args.path, args.folder, args.max_chars);
     default: throw new Error(`Outil inconnu : ${name}`);
   }
 }
